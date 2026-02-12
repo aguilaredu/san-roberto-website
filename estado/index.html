@@ -1,0 +1,211 @@
+<!doctype html>
+<html>
+    <head>
+        <title>Estado de cuenta</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <style>
+            /* --- Base Styles --- */
+            body {
+                font-family:
+                    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                    Helvetica, Arial, sans-serif;
+                padding: 20px;
+                max-width: 800px;
+                margin: 0 auto;
+                background-color: #f9f9f9;
+            }
+            h2 {
+                text-align: center;
+                color: #333;
+            }
+
+            /* --- Table Styles (Desktop) --- */
+            table {
+                width: 100%;
+                border-collapse: collapse;
+                background: white;
+                box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            }
+            th,
+            td {
+                padding: 12px 15px;
+                text-align: left;
+                border-bottom: 1px solid #ddd;
+                border-right: 1px solid #ddd; /* Vertical separator */
+            }
+            th:last-child,
+            td:last-child {
+                border-right: none; /* No separator for last column */
+            }
+            th {
+                background-color: #007bff;
+                color: white;
+                text-transform: uppercase;
+                font-size: 0.85rem;
+                letter-spacing: 0.5px;
+            }
+            td.numeric {
+                text-align: right; /* Right align numbers */
+            }
+            tr:hover {
+                background-color: #f1f1f1;
+            }
+            .error {
+                color: red;
+                text-align: center;
+                font-weight: bold;
+                margin-top: 20px;
+            }
+
+            /* --- MOBILE STYLES (Compact Table) --- */
+            @media screen and (max-width: 600px) {
+                body {
+                    padding: 5px 15px; /* Added side padding for margin */
+                }
+
+                h2 {
+                    font-size: 1.2rem;
+                    margin: 10px 0;
+                }
+
+                table {
+                    font-size: 10px; /* Small font size */
+                }
+
+                th,
+                td {
+                    padding: 4px 2px; /* Minimal padding */
+                    white-space: normal; /* Allow wrapping */
+                }
+
+                /* Ensure "Mes" column (index 1) wraps nicely if needed */
+                td:nth-child(2) {
+                    max-width: 80px;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <h2 id="title">Loading...</h2>
+        <div id="table-container"></div>
+
+        <script>
+            const csvFile = "payments.csv";
+
+            const params = new URLSearchParams(window.location.search);
+            const lote = params.get("lote");
+
+            if (!lote) {
+                document.getElementById("title").innerText = "All Statements";
+                fetchAndParse();
+            } else {
+                document.getElementById("title").innerText =
+                    "Estado de cuenta lote " + lote;
+                fetchAndParse();
+            }
+
+            function parseCSVRow(row) {
+                const result = [];
+                let cell = "";
+                let inQuotes = false;
+
+                for (let i = 0; i < row.length; i++) {
+                    const char = row[i];
+                    if (char === '"') {
+                        inQuotes = !inQuotes;
+                    } else if (char === "," && !inQuotes) {
+                        result.push(cell);
+                        cell = "";
+                    } else {
+                        cell += char;
+                    }
+                }
+                result.push(cell);
+                return result.map((c) => c.trim().replace(/^"|"$/g, "")); // Clean quotes
+            }
+
+            async function fetchAndParse() {
+                try {
+                    const response = await fetch(csvFile);
+                    if (!response.ok) throw new Error("CSV not found");
+                    const data = await response.text();
+
+                    // Parse CSV (Handle carriage returns \r just in case)
+                    const lines = data
+                        .split(/\r?\n/)
+                        .filter((line) => line.trim() !== "");
+                    if (lines.length === 0) return;
+
+                    const headers = parseCSVRow(lines[0]); // Use correct parser
+                    const rows = lines.slice(1).map(parseCSVRow);
+
+                    // CONFIG: Which column index is the ID? (0 = first column)
+                    const loteIndex = 0;
+
+                    // Filter Data if lote param is present
+                    let filteredRows = rows;
+                    if (lote) {
+                        filteredRows = rows.filter(
+                            (row) =>
+                                row[loteIndex] &&
+                                row[loteIndex].trim() === lote,
+                        );
+                    }
+
+                    if (filteredRows.length === 0) {
+                        document.getElementById("table-container").innerHTML =
+                            "<p class='error'>No records found for this unit.</p>";
+                        return;
+                    }
+
+                    // Build HTML
+                    let table = "<table><thead><tr>";
+                    // Filter headers to exclude Lote (index 0)
+                    headers.forEach((h, index) => {
+                        if (index !== loteIndex) {
+                            table += `<th>${h}</th>`;
+                        }
+                    });
+                    table += "</tr></thead><tbody>";
+
+                    filteredRows.forEach((row) => {
+                        table += "<tr>";
+                        // We add data-label="${headers[i]}" so CSS can read it!
+                        row.forEach((cell, i) => {
+                            if (i === loteIndex) return; // Skip Lote column
+
+                            // Safety check: ensure header exists for this column
+                            let headerLabel = headers[i] ? headers[i] : "Info";
+
+                            // Format numbers (assume columns > 1 are numeric: Cuota, Pago, Pendiente)
+                            // Lote=0, Mes=1, Cuota=2, Pago=3, Pendiente=4
+                            let displayCell = cell;
+                            let className = "";
+                            if (i >= 2) {
+                                const num = parseFloat(cell);
+                                if (!isNaN(num)) {
+                                    displayCell = num.toLocaleString("en-US", {
+                                        minimumFractionDigits: 2,
+                                        maximumFractionDigits: 2,
+                                    }); // Add commas and 2 decimals
+                                    className = "numeric";
+                                }
+                            }
+
+                            table += `<td class="${className}" data-label="${headerLabel}">${displayCell}</td>`;
+                        });
+                        table += "</tr>";
+                    });
+
+                    table += "</tbody></table>";
+                    document.getElementById("table-container").innerHTML =
+                        table;
+                } catch (error) {
+                    console.error(error);
+                    document.getElementById("table-container").innerHTML =
+                        "<p class='error'>Error loading data.</p>";
+                }
+            }
+        </script>
+    </body>
+</html>
